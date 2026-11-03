@@ -85,6 +85,9 @@ from modules.shared import cmd_opts, opts, state
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+# Persistent cache container for repeat-generate-4NEO compatibility
+_ADETAILER_SCRIPT_ARGS_CACHE = None
+
 PARAMS_TXT = "params.txt"
 
 no_huggingface = getattr(cmd_opts, "ad_no_huggingface", False)
@@ -939,6 +942,18 @@ class AfterDetailerScript(scripts.Script):
 
     @rich_traceback
     def process(self, p, *args_):
+        global _ADETAILER_SCRIPT_ARGS_CACHE
+        
+        # Check if the incoming args are empty/unpopulated (happens during repeat-generate loops)
+        is_args_empty = not args_ or all(not arg for arg in args_)
+        
+        if not is_args_empty:
+            # Cache the valid arguments coming straight from a fresh UI trigger
+            _ADETAILER_SCRIPT_ARGS_CACHE = args_
+        elif _ADETAILER_SCRIPT_ARGS_CACHE is not None:
+            # Re-apply the cached arguments during repeat-generate loops
+            args_ = _ADETAILER_SCRIPT_ARGS_CACHE
+
         if getattr(p, "_ad_disabled", False):
             return
 
