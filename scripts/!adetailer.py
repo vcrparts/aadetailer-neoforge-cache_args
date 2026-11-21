@@ -5,10 +5,11 @@ import re
 import sys
 import traceback
 from collections.abc import Sequence
-from copy import copy
+import copy
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
+
 
 import gradio as gr
 from PIL import Image, ImageChops
@@ -188,6 +189,28 @@ class AfterDetailerScript(scripts.Script):
                 guidance_end=args.ad_controlnet_guidance_end,
             )
 
+    @staticmethod
+    def debug_ad_args(label, args_):
+        print(f"\n[ADetailer DEBUG] {label}")
+
+        for i, arg in enumerate(args_):
+            if not isinstance(arg, dict):
+                print(
+                    f"Argument {i}: "
+                    f"type={type(arg).__name__}, "
+                    f"value={arg!r}"
+                )
+                continue
+
+            print(
+                f"Argument {i}: "
+                f"model={arg.get('ad_model')!r}, "
+                f"enabled={arg.get('ad_tab_enable')!r}, "
+                f"prompt={arg.get('ad_prompt')!r}, "
+                f"negative={arg.get('ad_negative_prompt')!r}"
+            )
+
+
     def is_ad_enabled(self, *args) -> bool:
         arg_list = [arg for arg in args if isinstance(arg, dict)]
         if not arg_list:
@@ -255,8 +278,29 @@ class AfterDetailerScript(scripts.Script):
             message = f"[-] ADetailer: Invalid arguments passed to ADetailer: {args_!r}"
             raise ValueError(message)
 
+        print("\n[ADetailer DEBUG] GET_ARGS BEFORE XYZ")
+
+        for i, arg in enumerate(args):
+            print(
+                f"Slot {i}: "
+                f"prompt={arg.get('ad_prompt')!r}, "
+                f"negative={arg.get('ad_negative_prompt')!r}"
+            )
+
         if hasattr(p, "_ad_xyz"):
+            print("\n[ADetailer DEBUG] XYZ OVERRIDE:")
+            print(p._ad_xyz)
+
             args[0] = {**args[0], **p._ad_xyz}
+
+        print("\n[ADetailer DEBUG] GET_ARGS AFTER XYZ")
+
+        for i, arg in enumerate(args):
+            print(
+                f"Slot {i}: "
+                f"prompt={arg.get('ad_prompt')!r}, "
+                f"negative={arg.get('ad_negative_prompt')!r}"
+            )
 
         all_inputs: list[ADetailerArgs] = []
 
@@ -268,11 +312,18 @@ class AfterDetailerScript(scripts.Script):
                 print(msg, arg_dict, file=sys.stderr)
                 continue
 
+            print(
+                f"[ADetailer DEBUG] CONVERTED SLOT {n}: "
+                f"prompt={inp.ad_prompt!r}, "
+                f"negative={inp.ad_negative_prompt!r}"
+            )
+
             all_inputs.append(inp)
 
         if not all_inputs:
             msg = "[-] ADetailer: No valid arguments found."
             raise ValueError(msg)
+
         return all_inputs
 
     def extra_params(self, arg_list: list[ADetailerArgs]) -> dict:
@@ -612,14 +663,14 @@ class AfterDetailerScript(scripts.Script):
         result = []
         for arg in script_args:
             try:
-                a = copy(arg)
+                a = copy.copy(arg)
             except TypeError:
                 a = arg
             result.append(a)
         return type_(result)
 
     def script_filter(self, p, args: ADetailerArgs):
-        script_runner = copy(p.scripts)
+        script_runner = copy.copy(p.scripts)
         script_args = self.script_args_copy(p.script_args)
 
         ad_only_selected_scripts = opts.data.get("ad_only_selected_scripts", True)
@@ -651,7 +702,7 @@ class AfterDetailerScript(scripts.Script):
         new_args = []
         for arg in script_args:
             if "controlnet" in arg.__class__.__name__.lower():
-                new = copy(arg)
+                new = copy.copy(arg)
                 if hasattr(new, "enabled"):
                     new.enabled = False
                 if hasattr(new, "input_mode"):
@@ -659,7 +710,7 @@ class AfterDetailerScript(scripts.Script):
                 new_args.append(new)
 
             elif isinstance(arg, dict) and "module" in arg:
-                new = copy(arg)
+                new = copy.copy(arg)
                 new["enabled"] = False
                 new_args.append(new)
 
@@ -940,25 +991,73 @@ class AfterDetailerScript(scripts.Script):
                 p2.width, p2.height, pred.bboxes[j]
             )
 
+    
+
     @rich_traceback
     def process(self, p, *args_):
+        
         global _ADETAILER_SCRIPT_ARGS_CACHE
-        
-        # Check if the incoming args are empty/unpopulated (happens during repeat-generate loops)
-        is_args_empty = not args_ or all(not arg for arg in args_)
-        
-        if not is_args_empty:
-            # Cache the valid arguments coming straight from a fresh UI trigger
-            _ADETAILER_SCRIPT_ARGS_CACHE = args_
-        elif _ADETAILER_SCRIPT_ARGS_CACHE is not None:
-            # Re-apply the cached arguments during repeat-generate loops
-            args_ = _ADETAILER_SCRIPT_ARGS_CACHE
 
-        if getattr(p, "_ad_disabled", False):
-            return
+        # Determine whether incoming arguments contain meaningful
+        # ADetailer configuration.
 
-        p._ad_is_hr_pass = False
+        def has_populated_ad_args(args_):
+            ad_dicts = [
+                arg for arg in args_
+                if isinstance(arg, dict) and "ad_model" in arg
+            ]
 
+            for arg in ad_dicts:
+                model = arg.get("ad_model")
+                prompt = arg.get("ad_prompt")
+                negative = arg.get("ad_negative_prompt")
+
+                if (
+                    model not in (None, "", "None")
+                    and (
+                        bool(prompt and prompt.strip())
+                        or bool(negative and negative.strip())
+                    )
+                ):
+                    return True
+
+            return False
+
+        self.debug_ad_args("INCOMING PROCESS ARGUMENTS", args_)
+
+        incoming_populated = has_populated_ad_args(args_)
+
+        cached_populated = (
+            _ADETAILER_SCRIPT_ARGS_CACHE is not None
+            and has_populated_ad_args(_ADETAILER_SCRIPT_ARGS_CACHE)
+        )
+
+        print(
+            f"[ADetailer DEBUG] "
+            f"Incoming populated: {incoming_populated}"
+        )
+
+        print(
+            f"[ADetailer DEBUG] "
+            f"Cached populated: {cached_populated}"
+        )
+
+        if incoming_populated:
+            _ADETAILER_SCRIPT_ARGS_CACHE = copy.deepcopy(args_)
+
+            print("[ADetailer DEBUG] UPDATED cache")
+
+        elif cached_populated:
+            args_ = copy.deepcopy(_ADETAILER_SCRIPT_ARGS_CACHE)
+
+            print("[ADetailer DEBUG] RESTORED cache")
+
+        else:
+            print("[ADetailer DEBUG] No valid cache available")
+
+        self.debug_ad_args("FINAL PROCESS ARGUMENTS", args_)
+
+        # Original ADetailer processing logic.
         if is_img2img_inpaint(p) and is_all_black(self.get_image_mask(p)):
             p._ad_disabled = True
             msg = (
@@ -973,10 +1072,22 @@ class AfterDetailerScript(scripts.Script):
 
         self.set_skip_img2img(p, *args_)
         if getattr(p, "_ad_disabled", False):
-            # case when img2img inpainting with skip img2img
             return
 
         arg_list = self.get_args(p, *args_)
+
+        print("\n[ADetailer DEBUG] ARG_LIST AFTER get_args() - first call")
+
+        for i, arg in enumerate(arg_list):
+            print(
+                f"Processed slot {i}: "
+                f"type={type(arg).__name__}, "
+                f"model={getattr(arg, 'ad_model', None)!r}, "
+                f"enabled={getattr(arg, 'ad_tab_enable', None)!r}, "
+                f"prompt={getattr(arg, 'ad_prompt', '')!r}, "
+                f"negative={getattr(arg, 'ad_negative_prompt', '')!r}"
+            )
+
 
         if hasattr(p, "_ad_xyz_prompt_sr"):
             replaced_positive_prompt, replaced_negative_prompt = self.get_prompt(
@@ -988,7 +1099,10 @@ class AfterDetailerScript(scripts.Script):
         applicable_args = [
             arg
             for arg in arg_list
-            if not (arg.ad_hires_fix_only and not self.is_hires_pass(p, allow_enable_hr=True))
+            if not (
+                arg.ad_hires_fix_only
+                and not self.is_hires_pass(p, allow_enable_hr=True)
+            )
         ]
 
         if not applicable_args:
@@ -997,6 +1111,7 @@ class AfterDetailerScript(scripts.Script):
 
         extra_params = self.extra_params(applicable_args)
         p.extra_generation_params.update(extra_params)
+
 
     def before_hr(self, p, *args_):
         if getattr(p, "_ad_disabled", False):
@@ -1060,7 +1175,7 @@ class AfterDetailerScript(scripts.Script):
         if is_mediapipe:
             print(f"mediapipe: {steps} detected.")
 
-        p2 = copy(i2i)
+        p2 = copy.copy(i2i)
         base_width, base_height = i2i.width, i2i.height
         seed, subseed = self.get_seed(p)
         for j in range(steps):
@@ -1103,7 +1218,7 @@ class AfterDetailerScript(scripts.Script):
                 break
 
             self.compare_prompt(p.extra_generation_params, processed, n=n)
-            p2 = copy(i2i)
+            p2 = copy.copy(i2i)
             p2.init_images = [processed.images[0]]
 
         if processed is not None:
@@ -1119,14 +1234,125 @@ class AfterDetailerScript(scripts.Script):
 
         pp.image = self.get_i2i_init_image(p, pp)
         pp.image = ensure_pil_image(pp.image, "RGB")
-        init_image = copy(pp.image)
+        init_image = copy.copy(pp.image)
+
+
+
+
+
+
+
+
+
+
+
+        #testing our restore thing here for the postprocessing arguments
+
+        global _ADETAILER_SCRIPT_ARGS_CACHE
+
+        # Determine whether incoming arguments contain meaningful
+        # ADetailer configuration.
+
+        def has_populated_ad_args(args_):
+            ad_dicts = [
+                arg for arg in args_
+                if isinstance(arg, dict) and "ad_model" in arg
+            ]
+
+            for arg in ad_dicts:
+                model = arg.get("ad_model")
+                prompt = arg.get("ad_prompt")
+                negative = arg.get("ad_negative_prompt")
+
+                if (
+                    model not in (None, "", "None")
+                    and (
+                        bool(prompt and prompt.strip())
+                        or bool(negative and negative.strip())
+                    )
+                ):
+                    return True
+
+            return False
+
+        self.debug_ad_args("INCOMING PROCESS ARGUMENTS AFTERDETAILER", args_)
+
+        incoming_populated = has_populated_ad_args(args_)
+
+        cached_populated = (
+            _ADETAILER_SCRIPT_ARGS_CACHE is not None
+            and has_populated_ad_args(_ADETAILER_SCRIPT_ARGS_CACHE)
+        )
+
+        print(
+            f"[ADetailer DEBUG] "
+            f"AFTERDETAILER Incoming populated: {incoming_populated}"
+        )
+
+        print(
+            f"[ADetailer DEBUG] "
+            f"AFTERDETAILER Cached populated: {cached_populated}"
+        )
+
+        if incoming_populated:
+            _ADETAILER_SCRIPT_ARGS_CACHE = copy.deepcopy(args_)
+
+            print("[ADetailer DEBUG] UPDATED cache")
+
+        elif cached_populated:
+            args_ = copy.deepcopy(_ADETAILER_SCRIPT_ARGS_CACHE)
+
+            print("[ADetailer DEBUG] AFTERDETAILER RESTORED cache")
+
+        else:
+            print("[ADetailer DEBUG] AFTERDETAILER No valid cache available")
+
+        self.debug_ad_args("AFTERDETAILER FINAL PROCESS ARGUMENTS", args_)
+
+
+
+
+
+
+
+
+
+
+
+
+
+        print("\n[ADetailer DEBUG] POSTPROCESS arguments:")
+
+        for i, arg in enumerate(args_):
+            if isinstance(arg, dict) and "ad_model" in arg:
+                print(
+                    f"Slot {i}: "
+                    f"model={arg.get('ad_model')!r}, "
+                    f"enabled={arg.get('ad_tab_enable')!r}, "
+                    f"prompt_length={len(arg.get('ad_prompt') or '')}"
+                )
+
+
         arg_list = self.get_args(p, *args_)
+
+        print("\n[ADetailer DEBUG] ARG_LIST AFTER get_args() - Second call")
+
+        for i, arg in enumerate(arg_list):
+            print(
+                f"Processed slot {i}: "
+                f"type={type(arg).__name__}, "
+                f"model={getattr(arg, 'ad_model', None)!r}, "
+                f"enabled={getattr(arg, 'ad_tab_enable', None)!r}, "
+                f"prompt={getattr(arg, 'ad_prompt', '')!r}, "
+                f"negative={getattr(arg, 'ad_negative_prompt', '')!r}"
+            )
+
         params_txt_content = self.read_params_txt()
 
         if need_call_postprocess(p):
             dummy = Processed(p, [], p.seed, "")
             with preserve_prompts(p):
-                p.scripts.postprocess(copy(p), dummy)
+                p.scripts.postprocess(copy.copy(p), dummy)
 
         is_processed = False
         with CNHijackRestore(), pause_total_tqdm(), cn_allow_script_control():
@@ -1135,6 +1361,14 @@ class AfterDetailerScript(scripts.Script):
                     continue
                 if args.ad_hires_fix_only and not self.is_hires_pass(p):
                     continue
+
+                print(
+                    f"\n[ADetailer DEBUG] ENTERING INNER "
+                    f"n={n}, model={args.ad_model!r}, "
+                    f"prompt={args.ad_prompt!r}"
+                )
+
+
                 is_processed |= self._postprocess_image_inner(p, pp, args, n=n)
 
         if is_processed and not is_skip_img2img(p):
@@ -1144,7 +1378,7 @@ class AfterDetailerScript(scripts.Script):
 
         if need_call_process(p):
             with preserve_prompts(p):
-                copy_p = copy(p)
+                copy_p = copy.copy(p)
                 p.scripts.before_process(copy_p)
                 p.scripts.process(copy_p)
 
