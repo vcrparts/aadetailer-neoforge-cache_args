@@ -1,3 +1,15 @@
+#Gemine assisted Fork of AADetailer to work with Repeat-generate-4NEO
+https://github.com/hirorohi03/repeat-generate-4NEO
+
+Repeat generate 4NEO allows repeats without browser focus and while Windows is locked.  Unfortunately, AAdetailer would lose the prompt and settings after the first run and would revert to some hardcoded default values.  This Fork adds caching of the prompt and settings and restores them within AAdetailer.
+
+This fork is tested working with Repeat Generate 4NEO, Latent upscale, and XYZ Plot.  Other settings or plugins may not work.  AAdetailer setting modifications within XYZ plot have not been tested.
+
+As this fork is working for my needs, I do not plan to make any additional changes or updates.
+
+Enjoy!
+
+
 # AADetailer Forge Neo Python 3.13
 A small fork with new features and modifications, verified to work with up-to-date Forge Neo Python 3.13 only. (It can potentially work with other webUIs, but i am not promising to maintain them for anything other than Forge Neo Python 3.13)  
 
