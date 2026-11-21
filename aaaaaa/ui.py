@@ -77,17 +77,20 @@ def suffix(n: int, c: str = " ") -> str:
 
 
 def on_widget_change(state: dict, value: Any, *, attr: str):
-    if "is_api" in state:
-        state = state.copy()
-        state.pop("is_api")
-    state[attr] = value
-    return state
+    new_state = dict(state or {})
+
+    new_state.pop("is_api", None)
+    new_state[attr] = value
+
+    return new_state
 
 
 def on_generate_click(state: dict, *values: Any):
-    new_state = {}
+    new_state = dict(state or {})
+
     for attr, value in zip(ALL_ARGS.attrs, values):
         new_state[attr] = value
+
     new_state["is_api"] = ()
     return new_state
 
